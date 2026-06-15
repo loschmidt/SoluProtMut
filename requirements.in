@@ -1,0 +1,12 @@
+--find-links "https://data.pyg.org/whl/torch-2.1.0+cpu.html"
+biopython == 1.79  # < 1.82 # 1.82 removed three_to_one function https://github.com/biopython/biopython/pull/4508, 1.80 added the deprecation warning, TODO: internalize three_to_one function
+gradio == 4.*
+tensorboard
+huggingface-hub==0.36.0 # not used in the project, but v1 and higher does not work with gradio 4.x (`ImportError: cannot import name 'HfFolder' from 'huggingface_hub'`)
+torch ~= 2.1.0
+torch-geometric
+torch_scatter
+torch_cluster
+packaging         # required by tensorboard but not properly specified in its requirements (probably due to being preinstalled from some version of pip)
+scikit-learn==1.3.2
+scipy==1.10.1

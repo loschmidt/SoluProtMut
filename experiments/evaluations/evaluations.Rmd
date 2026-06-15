@@ -1,0 +1,179 @@
+---
+title: "evaluations"
+output: html_document
+date: '2024-04-15'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+
+library(boot)
+library(metrica) # bmi
+library(tidyr)
+```
+
+# Bootstrap distribution - proof of concept
+
+Bootstrap distribution of DMS-traine model on the LGK test set:
+
+```{r}
+# how to use boot library: https://www.statmethods.net/advstats/bootstrapping.html
+informedness <- function(x, i) {
+	bmi(x[i,], obs=true, pred=pred)$bmi
+}
+
+data <- read.csv("../train-on-DMS/results-LGK_dupl.v1.test.csv")
+
+data_train <- read.csv("../train-on-DMS/results-LGK_dupl_bymut.v1.train.csv")
+data_train$pred <- round(data_train$pred_avg) # average voting
+```
+
+With ensemble average voting:
+
+```{r}
+data$pred <- round(data$pred_avg)
+bootstrap_avg <- boot(data, statistic=informedness, R=5000)
+bootstrap_avg
+```
+
+With ensemble majority voting: *slightly, insignificantly better*
+
+```{r}
+data$pred <- round(data$pred_maj)
+bootstrap_maj <- boot(data, statistic=informedness, R=5000)
+bootstrap_maj
+```
+
+```{r}
+boot(data_train, statistic=informedness, R=100)
+```
+
+# Bootstrap all the models
+
+```{r load-data}
+# all examined models
+MODELS = strsplit(
+"train-on-DMS
+ train-on-LGK-dupl
+ train-on-LGK-GFP
+ train-on-PKS
+ train-on-TEM-v22
+ train-on-DMS-leave-LGK
+ train-on-DMS-leave-PKS
+ train-on-DMS-leave-TEM
+ fine-tuned-TEM
+ fine-tuned-PKS
+ fine-tuned-DMS
+ train-bypos-on-LGK-dupl
+ train-bypos-on-PKS
+ train-bypos-on-TEM
+", '\\s+')
+
+models = c()
+paths = c()
+sets = c()
+for(model in MODELS[[1]]) {
+	evals <- list.files(path=paste0("../", model), pattern='*.test.csv')
+	sets <- c(sets, evals)
+	models <- c(models, rep(model, length(evals))) # repeat
+	
+	paths <- c(paths, list.files(path=paste0("../", model), pattern='*.test.csv', full.name=TRUE))
+}
+
+# remove results- prefix and .csv suffix
+sets <- gsub("^results-|.csv$", "", sets)
+
+# load all raw predictions
+datas <- lapply(paths, read.csv, header=TRUE)
+```
+
+## Bootstrap all the data
+
+```{r bootstrap}
+bootstrap_CI <- function(data) {
+	data$pred <- round(data$pred_avg)
+	suppressWarnings(
+		data %>%
+			boot(statistic=informedness, R=1000) %>%
+			boot.ci()
+	)
+}
+
+CIs <- lapply(datas, bootstrap_CI)
+```
+
+Construct table of confidence intervals (as 95% percentile):
+
+```{r CIs}
+eval_table <- data.frame(
+	model = models,
+	dataset = sets,
+	CI_min = sapply(CIs, \(x) x$percent[4]),
+	informedness = sapply(CIs, \(x) x$t0),
+	CI_max = sapply(CIs, \(x) x$percent[5])
+)
+
+CI_min_table <- eval_table %>%
+	pivot_wider(id_cols=model, names_from=dataset, values_from=CI_min)
+CI_max_table <- eval_table %>%
+	pivot_wider(id_cols=model, names_from=dataset, values_from=CI_max)
+inform_table <- eval_table %>%
+	pivot_wider(id_cols=model, names_from=dataset, values_from=informedness)
+```
+
+Sparklines with confidence intervals.
+
+```{r echo=FALSE}
+# based on https://glin.github.io/reactable/articles/cookbook/cookbook.html#bar-charts
+library(htmltools)
+library(reactable)
+
+sparkline_bar <- function(label, low, upp, height = "1.5rem", fill = "#00bfc4", background = NULL) {
+	left <- max(low, 0)
+	# show at least minimal CI bar	
+	diff = upp-low
+	MIN_CI <- 1
+	if(diff < MIN_CI) {
+		low <- low - (MIN_CI - diff)/2
+		diff <- MIN_CI
+	}
+	
+	CI <- div(style = list(background = fill, left=paste0(left, '%'), width = paste0(upp-left, '%'), height = '100%', position='absolute'))
+	if(low < 0) {
+		low = -low
+		fill = "red"
+	}
+	bar <- div(style = list(background = fill, width = paste0(low, '%'), height = '100%', opacity=0.5, position='absolute'))
+	
+	chart <- div(style = list(flexGrow = 1, background = background, height = height, width = '100%', position="absolute"), CI, bar)
+	label <- span(style = list(position = "relative", left="1%"), label)
+	div(style = list(display = "flex", alignItems = "center", position="relative"), chart, label)
+}
+
+```
+
+### Bootstrap results
+
+Showing `informedness (confidence interval)` table model vs. evaluation set:
+
+```{r print-results, echo=FALSE, results='asis'}
+get_column <- function(name) {
+	colDef(align = "left", cell = function(value, index) {
+      min <- CI_min_table[index,][[name]] * 100
+      max <- CI_max_table[index,][[name]] * 100
+      label = sprintf("%.1f (%.1f–%.1f)", value * 100, min, max)
+      if(!is.na(min))
+    	sparkline_bar(label, min, max)
+    })
+}
+columns <- lapply(names(inform_table), get_column)
+names(columns) <- names(inform_table)
+columns <- columns[2:length(columns)]
+
+reactable(
+  inform_table,
+  columns = columns,
+  pagination = FALSE
+)
+```

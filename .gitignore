@@ -1,0 +1,12 @@
+# generated files or download from public sources
+/data/
+/data_preprocessed/
+/data_raw/*/
+/data_temp/
+tmp/
+# Python cache files
+__pycache__/
+# Models and training logs
+*.pth
+*.tfevents.*
+.Rproj.user
